@@ -262,6 +262,23 @@ main{flex:1; padding:18px 16px 100px;}
   opacity:0; pointer-events:none; transition:opacity .2s ease;
 }
 .overlay.open{opacity:1; pointer-events:auto;}
+.login-gate{
+  position:fixed; inset:0; z-index:200; background:var(--bg);
+  display:flex; align-items:center; justify-content:center; padding:24px;
+}
+.login-card{
+  width:100%; max-width:360px; background:var(--surface); border-radius:22px;
+  padding:32px 24px; box-shadow:0 10px 30px rgba(60,35,20,0.12); text-align:center;
+}
+.login-card img{width:64px; height:64px; border-radius:16px; margin-bottom:14px;}
+.login-title{font-weight:800; font-size:18px; color:var(--text); margin-bottom:2px;}
+.login-sub{font-size:13px; color:var(--text-soft); margin-bottom:20px;}
+.login-card input{
+  width:100%; box-sizing:border-box; padding:12px 14px; border-radius:12px; border:1px solid var(--border);
+  font-size:15px; margin-bottom:12px; background:var(--bg); text-align:center; direction:ltr;
+}
+.login-card .btn{width:100%; justify-content:center;}
+.login-error{color:var(--danger); font-size:12.5px; margin-top:10px; min-height:16px;}
 .modal{
   width:100%; max-width:480px; background:var(--bg);
   border-radius:26px 26px 0 0; padding:20px 20px 26px; max-height:88vh; overflow-y:auto;
@@ -307,6 +324,7 @@ a.link-plain{color:var(--primary-deep); text-decoration:none; font-weight:600;}
 </style>
 </head>
 <body>
+<div id="loginGate" class="login-gate" style="display:none;"></div>
 <div id="app">
 
   <header class="top">
@@ -366,6 +384,8 @@ let remindersEnabled = false;
 let reminded = new Set();
 let sentSummaries = {};
 let authorizedPhones = [];
+let loginPhones = [];
+const APP_VERSION = '2026-07-19-4';
 
 const HE_DOW = ['א','ב','ג','ד','ה','ו','ש'];
 const HE_DOW_FULL = ['יום ראשון','יום שני','יום שלישי','יום רביעי','יום חמישי','יום שישי','שבת'];
@@ -540,6 +560,10 @@ async function loadAll(){
   reminded = new Set(await loadKey('pilates_reminded', []));
   sentSummaries = await loadKey('pilates_sent_summaries', {});
   authorizedPhones = await loadKey('pilates_authorized_phones', []);
+  loginPhones = await loadKey('pilates_login_phones', [
+    {id:'seed1', label:'', phone:'0523362295'},
+    {id:'seed2', label:'', phone:'0525551897'},
+  ]);
 }
 const persist = {
   clients: ()=>saveKey('pilates_clients', clients),
@@ -548,7 +572,61 @@ const persist = {
   reminded: ()=>saveKey('pilates_reminded', Array.from(reminded)),
   sentSummaries: ()=>saveKey('pilates_sent_summaries', sentSummaries),
   authorizedPhones: ()=>saveKey('pilates_authorized_phones', authorizedPhones),
+  loginPhones: ()=>saveKey('pilates_login_phones', loginPhones),
 };
+
+/* ---------------------------------------------------------
+   LOGIN GATE — closed list of authorized phone numbers,
+   managed in the ניהול (Settings) tab. Re-asked after every
+   app update (APP_VERSION bump), remembered otherwise.
+--------------------------------------------------------- */
+function normalizePhone(p){ return (p||'').replace(/\D/g,''); }
+
+async function isLoggedInForCurrentVersion(){
+  const state = await loadKey('pilates_login_state', null);
+  return !!(state && state.version === APP_VERSION && state.phone);
+}
+
+async function checkLoginGate(){
+  if(!loginPhones.length){ return; } // no restriction configured yet — open access
+  const ok = await isLoggedInForCurrentVersion();
+  if(!ok) showLoginGate();
+}
+
+function showLoginGate(){
+  const gate = document.getElementById('loginGate');
+  const logoSrc = (document.querySelector('.brand-mark img')||{}).src || '';
+  gate.innerHTML = `
+    <div class="login-card">
+      ${logoSrc?`<img src="${logoSrc}" alt="">`:''}
+      <div class="login-title">Zohar Pilates</div>
+      <div class="login-sub">הזינו את מספר הטלפון שלכם כדי להיכנס</div>
+      <input type="tel" inputmode="tel" id="loginPhoneInput" placeholder="05X-XXXXXXX" autofocus>
+      <button class="btn btn-primary" id="loginSubmitBtn">כניסה</button>
+      <div class="login-error" id="loginErrorMsg"></div>
+    </div>
+  `;
+  gate.style.display = 'flex';
+  const input = document.getElementById('loginPhoneInput');
+  const errorEl = document.getElementById('loginErrorMsg');
+  const trySubmit = async ()=>{
+    const entered = normalizePhone(input.value);
+    if(!entered){ errorEl.textContent = 'נא להזין מספר טלפון'; return; }
+    const match = loginPhones.some(p=> normalizePhone(p.phone)===entered);
+    if(match){
+      await saveKey('pilates_login_state', {phone: entered, version: APP_VERSION});
+      gate.style.display = 'none';
+      gate.innerHTML = '';
+    } else {
+      errorEl.textContent = 'מספר לא מזוהה כמורשה לכניסה';
+      input.value = '';
+      input.focus();
+    }
+  };
+  document.getElementById('loginSubmitBtn').onclick = trySubmit;
+  input.addEventListener('keydown', e=>{ if(e.key==='Enter') trySubmit(); });
+  setTimeout(()=> input.focus(), 50);
+}
 
 /* ---------------------------------------------------------
    BACKUP: export / import all app data as a JSON file
@@ -639,6 +717,37 @@ function waHref(phone, text){
 }
 function wazeHref(address){
   return `https://waze.com/ul?q=${encodeURIComponent(address||'')}&navigate=yes`;
+}
+
+/* Navigate to a lesson's location in Waze, and in the background auto-calculate
+   and save the round-trip km using the phone's current location as the origin. */
+async function navigateToLessonAndCalcKm(lessonId){
+  const l = lessons.find(x=>x.id===lessonId);
+  if(!l) return;
+  const c = clientById(l.clientId);
+  const destAddress = l.location || (c ? c.address : '') || '';
+  if(!destAddress){
+    alert('אין כתובת יעד לשיעור זה (לא הוגדר מקום השיעור ואין כתובת שמורה ללקוח/ה)');
+    return;
+  }
+  // Open Waze immediately — Waze uses the phone's live GPS location as the starting point automatically
+  window.open(wazeHref(destAddress), '_blank');
+
+  if(!navigator.geolocation) return; // navigation still works; km auto-calc just isn't possible
+  try{
+    const pos = await new Promise((resolve,reject)=> navigator.geolocation.getCurrentPosition(resolve, reject, {timeout:8000}));
+    const fromAddress = await reverseGeocodeAddress(pos.coords.latitude, pos.coords.longitude);
+    if(!fromAddress) return;
+    const km = await estimateRoundTripKm(fromAddress, destAddress);
+    if(km!=null){
+      l.from = fromAddress;
+      l.km = km;
+      persist.lessons();
+      renderMain();
+    }
+  }catch(e){
+    // navigation already started; km auto-calc is best-effort only, fail silently
+  }
 }
 function gcalHref(l){
   const c = clientById(l.clientId);
@@ -949,7 +1058,7 @@ function lessonItemHTML(l){
       <div class="item-actions">
         ${phone ? `<a class="btn btn-ghost btn-sm" href="${telHref(phone)}">📞 שיחה</a>` : ''}
         ${phone ? `<a class="btn btn-rose btn-sm" href="${waHref(phone, 'היי '+name+'! מזכירה לך את השיעור שלנו ב-'+l.time+' 😊')}" target="_blank">💬 וואטסאפ</a>` : ''}
-        ${address ? `<a class="btn btn-gold btn-sm" href="${wazeHref(address)}" target="_blank">🧭 Waze</a>` : ''}
+        ${address ? `<button class="btn btn-gold btn-sm" data-nav-lesson="${l.id}">🚗 ניווט למשמרת</button>` : ''}
         <a class="btn btn-ghost btn-sm" href="${gcalHref(l)}" target="_blank">📅 יומן גוגל</a>
         <button class="btn btn-ghost btn-sm" data-edit-lesson="${l.id}">✏️</button>
         <button class="btn btn-danger btn-sm" data-del-lesson="${l.id}">${TRASH_ICON}</button>
@@ -1067,6 +1176,7 @@ function settingsTabHTML(){
       ? `<div class="tiny" style="margin-bottom:12px;">🔔 תזכורות פעילות — שעה לפני כל שיעור, כולל שם הלקוח/ה וזמן הגעה משוער (כל עוד האפליקציה פתוחה בדפדפן)</div>`
       : `<button class="btn btn-ghost btn-sm" id="enableRemindersBtn" style="width:100%; justify-content:center; margin-bottom:12px;">🔔 הפעלת תזכורות שעה לפני כל שיעור</button>`}
     <button class="btn btn-ghost btn-sm" id="manageAuthPhonesBtn" style="width:100%; justify-content:center; margin-bottom:12px;">☎️ ניהול מספרים מורשים לשליחת סיכומים</button>
+    <button class="btn btn-ghost btn-sm" id="manageLoginPhonesBtn" style="width:100%; justify-content:center; margin-bottom:12px;">🔒 ניהול מספרים מורשים לכניסה לאפליקציה</button>
     <div class="section-title" style="margin-top:18px;">גיבוי ושחזור נתונים</div>
     <div class="tiny" style="margin-bottom:12px;">מומלץ לייצא גיבוי לפני מעבר לגרסה חדשה של האפליקציה, ולייבא אותו בגרסה החדשה כדי לשמור על כל הנתונים.</div>
     <div class="row-2" style="margin-bottom:14px;">
@@ -1082,6 +1192,83 @@ function getClientMonthStats(clientId, y, m){
   const ls = lessons.filter(l=>l.clientId===clientId && l.date && l.date.startsWith(mk));
   const minutes = ls.reduce((s,l)=>s+Number(l.duration||0),0);
   return {count: ls.length, hours: minutes/60};
+}
+
+function openLoginPhonesModal(){
+  openModal(`
+    <div class="modal-head"><h3>מספרים מורשים לכניסה לאפליקציה</h3><button class="close-x" id="modalClose">✕</button></div>
+    <div class="tiny" style="margin-bottom:12px;">רשימה סגורה — רק מי שהמספר שלו/שלה ברשימה הזו יוכל/תוכל להיכנס לאפליקציה. אם הרשימה ריקה, הכניסה פתוחה לכל אחד/ת (ללא הגבלה).</div>
+    <div id="loginPhonesList"></div>
+    <div class="row-2">
+      <input id="f_loginLabel" placeholder="שם (לדוגמה: זהר)">
+      <input id="f_loginPhone" type="tel" inputmode="tel" placeholder="05X-XXXXXXX">
+    </div>
+    <button type="button" class="btn btn-ghost btn-sm" id="addLoginPhoneBtn" style="width:100%; justify-content:center; margin-top:8px;">＋ הוספת מספר מורשה לכניסה</button>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="closeLoginPhonesBtn">סגירה</button>
+    </div>
+  `);
+  document.getElementById('modalClose').onclick = closeModal;
+  document.getElementById('closeLoginPhonesBtn').onclick = closeModal;
+
+  const renderList = ()=>{
+    const el = document.getElementById('loginPhonesList');
+    el.innerHTML = loginPhones.length ? loginPhones.map(p=>`
+      <div class="item" style="padding:8px 10px; margin-bottom:6px;" data-row="${p.id}">
+        <div class="item-top">
+          <div class="item-title" style="font-size:13px;">${p.label ? p.label+' · ' : ''}${p.phone}</div>
+          <div style="display:flex; gap:4px;">
+            <button type="button" class="btn-icon" data-edit-login="${p.id}" style="width:28px; height:28px; font-size:13px;">✏️</button>
+            <button type="button" class="btn-icon" data-del-login="${p.id}" style="width:28px; height:28px; font-size:13px; color:var(--danger); background:#F7E4E0;">${TRASH_ICON}</button>
+          </div>
+        </div>
+      </div>`).join('') : `<div class="tiny" style="margin-bottom:10px;">אין הגבלה כרגע — כל אחד/ת יכול/ה להיכנס.</div>`;
+    el.querySelectorAll('[data-del-login]').forEach(b=>{
+      b.onclick = ()=>{
+        loginPhones = loginPhones.filter(p=>p.id!==b.dataset.delLogin);
+        persist.loginPhones();
+        renderList();
+      };
+    });
+    el.querySelectorAll('[data-edit-login]').forEach(b=>{
+      b.onclick = ()=>{
+        const p = loginPhones.find(x=>x.id===b.dataset.editLogin);
+        const row = el.querySelector(`[data-row="${p.id}"]`);
+        row.innerHTML = `
+          <div class="row-2" style="margin-bottom:6px;">
+            <input class="edit-label" value="${p.label||''}" placeholder="שם">
+            <input class="edit-phone" type="tel" inputmode="tel" value="${p.phone}" placeholder="05X-XXXXXXX">
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button type="button" class="btn btn-primary btn-sm" data-save-login="${p.id}" style="flex:1; justify-content:center;">שמירה</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-cancel-login="${p.id}" style="flex:1; justify-content:center;">ביטול</button>
+          </div>`;
+        row.querySelector('[data-save-login]').onclick = ()=>{
+          const newLabel = row.querySelector('.edit-label').value.trim();
+          const newPhone = row.querySelector('.edit-phone').value.trim();
+          if(!newPhone){ alert('נא להזין מספר טלפון'); return; }
+          p.label = newLabel; p.phone = newPhone;
+          persist.loginPhones();
+          renderList();
+        };
+        row.querySelector('[data-cancel-login]').onclick = renderList;
+      };
+    });
+  };
+  renderList();
+
+  document.getElementById('addLoginPhoneBtn').onclick = ()=>{
+    const labelEl = document.getElementById('f_loginLabel');
+    const phoneEl = document.getElementById('f_loginPhone');
+    const label = labelEl.value.trim();
+    const phone = phoneEl.value.trim();
+    if(!phone){ alert('נא להזין מספר טלפון'); return; }
+    loginPhones.push({id:uid(), label, phone});
+    persist.loginPhones();
+    labelEl.value = '';
+    phoneEl.value = '';
+    renderList();
+  };
 }
 
 function openAuthorizedPhonesModal(){
@@ -1104,12 +1291,39 @@ function openAuthorizedPhonesModal(){
   const renderAuthList = ()=>{
     const el = document.getElementById('authPhonesList');
     el.innerHTML = authorizedPhones.length ? authorizedPhones.map(p=>`
-      <div class="item" style="padding:8px 10px; margin-bottom:6px;">
+      <div class="item" style="padding:8px 10px; margin-bottom:6px;" data-row="${p.id}">
         <div class="item-top">
           <div class="item-title" style="font-size:13px;">${p.label ? p.label+' · ' : ''}${p.phone}</div>
-          <button type="button" class="btn-icon" data-del-auth="${p.id}" style="width:28px; height:28px; font-size:13px; color:var(--danger); background:#F7E4E0;">${TRASH_ICON}</button>
+          <div style="display:flex; gap:4px;">
+            <button type="button" class="btn-icon" data-edit-auth="${p.id}" style="width:28px; height:28px; font-size:13px;">✏️</button>
+            <button type="button" class="btn-icon" data-del-auth="${p.id}" style="width:28px; height:28px; font-size:13px; color:var(--danger); background:#F7E4E0;">${TRASH_ICON}</button>
+          </div>
         </div>
       </div>`).join('') : `<div class="tiny" style="margin-bottom:10px;">אין עדיין מספרים מורשים ברשימה.</div>`;
+    el.querySelectorAll('[data-edit-auth]').forEach(b=>{
+      b.onclick = ()=>{
+        const p = authorizedPhones.find(x=>x.id===b.dataset.editAuth);
+        const row = el.querySelector(`[data-row="${p.id}"]`);
+        row.innerHTML = `
+          <div class="row-2" style="margin-bottom:6px;">
+            <input class="edit-label" value="${p.label||''}" placeholder="שם">
+            <input class="edit-phone" type="tel" inputmode="tel" value="${p.phone}" placeholder="05X-XXXXXXX">
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button type="button" class="btn btn-primary btn-sm" data-save-auth="${p.id}" style="flex:1; justify-content:center;">שמירה</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-cancel-auth="${p.id}" style="flex:1; justify-content:center;">ביטול</button>
+          </div>`;
+        row.querySelector('[data-save-auth]').onclick = ()=>{
+          const newLabel = row.querySelector('.edit-label').value.trim();
+          const newPhone = row.querySelector('.edit-phone').value.trim();
+          if(!newPhone){ alert('נא להזין מספר טלפון'); return; }
+          p.label = newLabel; p.phone = newPhone;
+          persist.authorizedPhones();
+          renderAuthList();
+        };
+        row.querySelector('[data-cancel-auth]').onclick = renderAuthList;
+      };
+    });
     el.querySelectorAll('[data-del-auth]').forEach(b=>{
       b.onclick = ()=>{
         authorizedPhones = authorizedPhones.filter(p=>p.id!==b.dataset.delAuth);
@@ -1678,6 +1892,8 @@ function attachTabEvents(){
     if(remindBtn) remindBtn.onclick = enableReminders;
     const authBtn = document.getElementById('manageAuthPhonesBtn');
     if(authBtn) authBtn.onclick = openAuthorizedPhonesModal;
+    const loginPhonesBtn = document.getElementById('manageLoginPhonesBtn');
+    if(loginPhonesBtn) loginPhonesBtn.onclick = openLoginPhonesModal;
     const exportBtn = document.getElementById('exportBackupBtn');
     if(exportBtn) exportBtn.onclick = exportBackup;
     const importBtn = document.getElementById('importBackupBtn');
@@ -1698,6 +1914,7 @@ function attachTabEvents(){
     });
     document.querySelectorAll('[data-add-lesson]').forEach(b=> b.onclick = ()=> openLessonModal(b.dataset.addLesson));
     document.querySelectorAll('[data-edit-lesson]').forEach(b=> b.onclick = ()=> openLessonModal(null, b.dataset.editLesson));
+    document.querySelectorAll('[data-nav-lesson]').forEach(b=> b.onclick = ()=> navigateToLessonAndCalcKm(b.dataset.navLesson));
     document.querySelectorAll('[data-del-lesson]').forEach(b=> b.onclick = ()=>{
       openConfirmModal('למחוק שיעור זה?', ()=>{
         lessons = lessons.filter(x=>x.id!==b.dataset.delLesson);
@@ -1734,6 +1951,7 @@ async function init(){
   renderHeaderDate();
   initWeather();
   await loadAll();
+  await checkLoginGate();
   selectedDayKey = todayKey();
   renderMain();
   if(remindersEnabled && 'Notification' in window && Notification.permission==='granted'){
