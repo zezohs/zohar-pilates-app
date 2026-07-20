@@ -57,7 +57,7 @@ button{font-family:inherit; cursor:pointer;}
 /* ---------- HEADER ---------- */
 header.top{
   position:relative;
-  padding:22px 20px 40px;
+  padding:calc(22px + env(safe-area-inset-top)) 20px 40px;
   background:linear-gradient(155deg, var(--primary-deep) 0%, var(--primary) 60%, #C17F4E 100%);
   color:#fff;
   border-radius:0 0 32px 32px;
@@ -119,7 +119,7 @@ header.top::after{
 .weather-inline .wdesc{font-size:11px; color:rgba(255,255,255,0.8); font-weight:500; line-height:1.2;}
 
 /* ---------- MAIN / TABS ---------- */
-main{flex:1; padding:18px 16px 100px;}
+main{flex:1; padding:18px calc(16px + env(safe-area-inset-right)) calc(100px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));}
 .section-title{font-size:15px; font-weight:700; margin:4px 2px 12px; display:flex; align-items:center; justify-content:space-between;}
 .section-title .hint{font-size:11.5px; color:var(--text-soft); font-weight:500;}
 
@@ -147,7 +147,7 @@ main{flex:1; padding:18px 16px 100px;}
 .btn-sm{padding:7px 12px; font-size:12px;}
 .btn-icon{width:34px; height:34px; border-radius:50%; padding:0; display:flex; align-items:center; justify-content:center; background:var(--primary-mist); color:var(--primary-deep); font-size:16px;}
 .fab{
-  position:fixed; bottom:92px; left:20px;
+  position:fixed; bottom:calc(92px + env(safe-area-inset-bottom)); left:20px;
   width:54px; height:54px; border-radius:50%;
   background:var(--rose); color:#fff; border:none;
   box-shadow:0 10px 20px rgba(169,88,106,0.35);
@@ -176,6 +176,12 @@ main{flex:1; padding:18px 16px 100px;}
 .cal-cell.selected .dot{background:#fff;}
 .cal-cell .hflag{position:absolute; top:3px; left:4px; font-size:9px; line-height:1;}
 .cal-cell .rflag{position:absolute; top:3px; right:4px; font-size:9px; line-height:1;}
+.cal-cell .count-badge{
+  position:absolute; bottom:2px; left:50%; transform:translateX(-50%);
+  background:var(--rose); color:#fff; font-size:9px; font-weight:800;
+  border-radius:8px; padding:0 4px; line-height:13px; min-width:13px; text-align:center;
+}
+.cal-cell.selected .count-badge{background:#fff; color:var(--primary);}
 
 .cal-legend{
   display:flex; flex-wrap:wrap; gap:10px 14px; margin-top:14px; padding-top:12px;
@@ -264,7 +270,8 @@ main{flex:1; padding:18px 16px 100px;}
 .overlay.open{opacity:1; pointer-events:auto;}
 .login-gate{
   position:fixed; inset:0; z-index:200; background:var(--bg);
-  display:flex; align-items:center; justify-content:center; padding:24px;
+  display:flex; align-items:center; justify-content:center;
+  padding:calc(24px + env(safe-area-inset-top)) calc(24px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left));
 }
 .login-card{
   width:100%; max-width:360px; background:var(--surface); border-radius:22px;
@@ -281,7 +288,7 @@ main{flex:1; padding:18px 16px 100px;}
 .login-error{color:var(--danger); font-size:12.5px; margin-top:10px; min-height:16px;}
 .modal{
   width:100%; max-width:480px; background:var(--bg);
-  border-radius:26px 26px 0 0; padding:20px 20px 26px; max-height:88vh; overflow-y:auto;
+  border-radius:26px 26px 0 0; padding:20px 20px calc(26px + env(safe-area-inset-bottom)); max-height:88vh; overflow-y:auto;
   transform:translateY(30px); transition:transform .25s ease;
 }
 .overlay.open .modal{transform:translateY(0);}
@@ -301,7 +308,7 @@ main{flex:1; padding:18px 16px 100px;}
 nav.bottom{
   position:fixed; bottom:0; left:50%; transform:translateX(-50%);
   width:100%; max-width:480px; background:#fff; border-top:1px solid var(--border);
-  display:flex; padding:8px 6px 10px; z-index:30;
+  display:flex; padding:8px 6px calc(10px + env(safe-area-inset-bottom)); z-index:30;
   box-shadow:0 -6px 20px rgba(39,79,71,0.06);
 }
 nav.bottom button{
@@ -385,7 +392,7 @@ let reminded = new Set();
 let sentSummaries = {};
 let authorizedPhones = [];
 let loginPhones = [];
-const APP_VERSION = '2026-07-19-9';
+const APP_VERSION = '2026-07-19-12';
 
 const HE_DOW = ['א','ב','ג','ד','ה','ו','ש'];
 const HE_DOW_FULL = ['יום ראשון','יום שני','יום שלישי','יום רביעי','יום חמישי','יום שישי','שבת'];
@@ -810,14 +817,6 @@ async function navigateToLessonAndCalcKm(lessonId){
     return;
   }
 
-  // Open a blank tab SYNCHRONOUSLY, right here in the click handler — before any "await".
-  // Browsers only allow window.open() without being blocked as a popup when it happens
-  // synchronously in direct response to the click. If we wait until after the km
-  // calculation (which needs several awaited network calls) to call window.open(),
-  // the browser no longer treats it as user-initiated and silently blocks it —
-  // that was the exact bug that made "navigate" appear to do nothing.
-  const navWin = window.open('', '_blank');
-
   const btn = document.querySelector(`[data-nav-lesson="${lessonId}"]`);
   const originalText = btn ? btn.textContent : '';
   if(btn){ btn.disabled = true; btn.textContent = '📍 מחשב מרחק...'; }
@@ -841,11 +840,14 @@ async function navigateToLessonAndCalcKm(lessonId){
 
   if(btn){ btn.disabled = false; btn.textContent = originalText; }
   renderMain();
-  // Redirect the already-open tab to Waze now that the km save has completed.
-  // Setting .location on an existing window reference is NOT subject to popup blocking.
-  const url = wazeHref(destAddress);
-  if(navWin && !navWin.closed){ navWin.location.href = url; }
-  else { window.open(url, '_blank'); } // fallback in case the initial open was blocked anyway
+  // Navigate the CURRENT page straight to Waze (same-page navigation, NOT a new window/tab).
+  // window.open() with target=_blank turned out to be unreliable on real mobile devices,
+  // especially inside a "standalone" home-screen web app, where new-window support is
+  // inconsistent. Setting location.href directly is never blocked as a popup (popup blockers
+  // only intervene on new windows), and is the same technique production apps like Uber/Lyft
+  // use for deep-linking into other apps (Waze/Google Maps) — the OS intercepts the universal
+  // link and hands off to the Waze app without needing a separate browser window at all.
+  window.location.href = wazeHref(destAddress);
 }
 function gcalHref(l){
   const c = clientById(l.clientId);
@@ -1082,13 +1084,14 @@ function calendarTabHTML(){
     const isLessonDay = dayLessons.length>0;
     const hasRecurring = dayLessons.some(l=>l.seriesId);
     const dots = dayLessons.slice(0,3).map(()=>'<span class="dot"></span>').join('');
+    const countBadge = dayLessons.length>1 ? `<span class="count-badge">${dayLessons.length}</span>` : '';
     const hol = getHoliday(key);
     const holClass = hol ? `hol-${hol.type}` : '';
     const holIcons = {holiday:'🎉', fast:'✡️', memorial:'🕯️', note:'✨'};
     const hflag = hol ? `<span class="hflag">${holIcons[hol.type]}</span>` : '';
     const rflag = hasRecurring ? `<span class="rflag" title="שיעור חוזר">🔁</span>` : '';
     cells += `<div class="cal-cell ${isToday?'today':''} ${isSel?'selected':''} ${isLessonDay?'has-lesson':''} ${holClass}" data-day="${key}" title="${hol?hol.names.join(', '):''}">
-      ${hflag}${rflag}<div>${d}</div><div class="dots">${dots}</div>
+      ${hflag}${rflag}<div>${d}</div>${countBadge || `<div class="dots">${dots}</div>`}
     </div>`;
   }
   const totalCells = startOffset + daysInMonth;
@@ -1109,6 +1112,7 @@ function calendarTabHTML(){
       <div class="legend-item"><span class="legend-box legend-today"></span>היום</div>
       <div class="legend-item"><span class="legend-box legend-selected"></span>יום נבחר</div>
       <div class="legend-item">🔁 שיעור חוזר</div>
+      <div class="legend-item"><span class="count-badge" style="position:static;">2</span> מספר שיעורים ביום</div>
       <div class="legend-item">🎉 חג</div>
       <div class="legend-item">✡️ יום צום</div>
       <div class="legend-item">🕯️ יום ציון</div>
