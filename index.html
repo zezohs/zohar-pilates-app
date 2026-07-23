@@ -395,7 +395,7 @@ let authorizedPhones = [];
 let loginPhones = [];
 let road6Price = 0;
 let kmPrice = 0;
-const APP_VERSION = 'v17'; // bump this on every update — also forces re-login and displays in the ניהול tab
+const APP_VERSION = 'v18'; // bump this on every update — also forces re-login and displays in the ניהול tab
 
 const HE_DOW = ['א','ב','ג','ד','ה','ו','ש'];
 const HE_DOW_FULL = ['יום ראשון','יום שני','יום שלישי','יום רביעי','יום חמישי','יום שישי','שבת'];
@@ -1256,10 +1256,10 @@ function dashboardTabHTML(){
     </div>
     <div class="trip-summary">
       <div class="card"><div class="big">${totalHours.toFixed(1)}</div><div class="lbl">שעות</div></div>
-      <div class="card"><div class="big">${totalKm.toFixed(0)}</div><div class="lbl">ק״מ</div></div>
+      <div class="card"><div class="big">${fmtMoney(travelCost)}</div><div class="lbl">עלות נסיעות</div></div>
       <div class="card"><div class="big">${fmtMoney(totalRevenue)}</div><div class="lbl">הכנסה משוערת</div></div>
     </div>
-    ${(kmPrice || road6Count) ? `<div class="tiny" style="margin-bottom:10px;">🚗 עלות נסיעות ישירה החודש: ${fmtMoney(travelCost)}${kmPrice?(' · '+totalKm.toFixed(0)+' ק״מ × '+fmtMoney(kmPrice)):''}${road6Count?(' · '+road6Count+' מעברי כביש 6'):''}</div>` : ''}
+    <div class="tiny" style="margin-bottom:10px;">${totalKm.toFixed(0)} ק״מ${road6Count?(' · '+road6Count+' מעברי כביש 6'):''}${kmPrice?(' · '+fmtMoney(kmPrice)+' לק״מ'):''}</div>
     ${missingRateCount ? `<div class="tiny" style="margin-bottom:10px;">${missingRateCount} שיעורים לא נכללו בסכום כי לא הוגדר תעריף לשעה. אפשר להגדיר תעריף בכרטיס הלקוח/ה למטה או בלשונית "לקוחות".</div>` : ''}
     <div class="section-title" style="margin-top:4px;">פירוט לפי לקוח/ה</div>
     <div class="stack">${rowsHtml}</div>
