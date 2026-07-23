@@ -176,11 +176,12 @@ main{flex:1; padding:18px calc(16px + env(safe-area-inset-right)) calc(100px + e
 .cal-cell.selected .dot{background:#fff;}
 .cal-cell .hflag{position:absolute; top:3px; left:4px; font-size:9px; line-height:1;}
 .cal-cell .rflag{position:absolute; top:3px; right:4px; font-size:9px; line-height:1;}
-.cal-cell .count-badge{
-  position:absolute; bottom:2px; left:50%; transform:translateX(-50%);
+.count-badge{
+  display:inline-flex; align-items:center; justify-content:center;
   background:var(--rose); color:#fff; font-size:9px; font-weight:800;
-  border-radius:8px; padding:0 4px; line-height:13px; min-width:13px; text-align:center;
+  border-radius:50%; width:16px; height:16px; min-width:16px; text-align:center; line-height:1;
 }
+.cal-cell .count-badge{position:absolute; bottom:2px; left:50%; transform:translateX(-50%);}
 .cal-cell.selected .count-badge{background:#fff; color:var(--primary);}
 
 .cal-legend{
@@ -392,7 +393,9 @@ let reminded = new Set();
 let sentSummaries = {};
 let authorizedPhones = [];
 let loginPhones = [];
-const APP_VERSION = 'v13'; // bump this on every update — also forces re-login and displays in the ניהול tab
+let road6Price = 0;
+let kmPrice = 0;
+const APP_VERSION = 'v17'; // bump this on every update — also forces re-login and displays in the ניהול tab
 
 const HE_DOW = ['א','ב','ג','ד','ה','ו','ש'];
 const HE_DOW_FULL = ['יום ראשון','יום שני','יום שלישי','יום רביעי','יום חמישי','יום שישי','שבת'];
@@ -400,7 +403,7 @@ const HE_MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','�
 
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 function triggerConfetti(){
-  const colors = ['#A85C2E','#C97B5A','#CC9F4E','#7C4220','#E8A87C'];
+  const colors = ['#FF5252','#FF9800','#FFD54F','#4CAF50','#26C6DA','#42A5F5','#7E57C2','#EC407A','#66BB6A','#FFCA28'];
   const container = document.createElement('div');
   container.style.position = 'fixed';
   container.style.inset = '0';
@@ -571,6 +574,8 @@ async function loadAll(){
     {id:'seed1', label:'', phone:'0523362295'},
     {id:'seed2', label:'', phone:'0525551897'},
   ]);
+  road6Price = await loadKey('pilates_road6_price', 0);
+  kmPrice = await loadKey('pilates_km_price', 0);
 }
 const persist = {
   clients: ()=>saveKey('pilates_clients', clients),
@@ -580,6 +585,8 @@ const persist = {
   sentSummaries: ()=>saveKey('pilates_sent_summaries', sentSummaries),
   authorizedPhones: ()=>saveKey('pilates_authorized_phones', authorizedPhones),
   loginPhones: ()=>saveKey('pilates_login_phones', loginPhones),
+  road6Price: ()=>saveKey('pilates_road6_price', road6Price),
+  kmPrice: ()=>saveKey('pilates_km_price', kmPrice),
 };
 
 /* ---------------------------------------------------------
@@ -808,47 +815,34 @@ function wazeHref(address){
    IMPORTANT: the km calculation + save must happen BEFORE opening Waze — once Waze opens
    (app-switch or new tab), the page can be backgrounded/suspended by the OS, which kills
    any pending network requests. Opening Waze first was the bug that caused km to never save. */
-async function navigateToLessonAndCalcKm(lessonId){
+/* Auto-calculate and save the round-trip km for a lesson, using the phone's current
+   location as the origin. Runs as a background best-effort task — it does NOT control
+   navigation at all (see the <a href> in lessonItemHTML for that). This separation matters:
+   iOS only hands off to the Waze app for a link tapped directly and synchronously by the
+   user; a JS-driven redirect (window.location.href / window.open) issued after any await
+   is not honored as a genuine user action and Waze silently fails to open. So navigation
+   must happen via a real, plain anchor tag with zero JS in between — this function just
+   rides along on the same click, in parallel, purely to fill in the km/from fields. */
+async function calcKmInBackground(lessonId){
   const l = lessons.find(x=>x.id===lessonId);
-  if(!l) return;
+  if(!l || !navigator.geolocation) return;
   const c = clientById(l.clientId);
   const destAddress = l.location || (c ? c.address : '') || '';
-  if(!destAddress){
-    alert('אין כתובת יעד לשיעור זה (לא הוגדר מקום השיעור ואין כתובת שמורה ללקוח/ה)');
-    return;
-  }
-
-  const btn = document.querySelector(`[data-nav-lesson="${lessonId}"]`);
-  const originalText = btn ? btn.textContent : '';
-  if(btn){ btn.disabled = true; btn.textContent = '📍 מחשב מרחק...'; }
-
-  if(navigator.geolocation){
-    try{
-      const pos = await new Promise((resolve,reject)=> navigator.geolocation.getCurrentPosition(resolve, reject, {timeout:8000}));
-      const fromAddress = await reverseGeocodeAddress(pos.coords.latitude, pos.coords.longitude);
-      if(fromAddress){
-        const km = await estimateRoundTripKm(fromAddress, destAddress);
-        if(km!=null){
-          l.from = fromAddress;
-          l.km = km;
-          await persist.lessons();
-        }
-      }
-    }catch(e){
-      // best effort — proceed to navigation regardless of whether km calc succeeded
+  if(!destAddress) return;
+  try{
+    const pos = await new Promise((resolve,reject)=> navigator.geolocation.getCurrentPosition(resolve, reject, {timeout:8000}));
+    const fromAddress = await reverseGeocodeAddress(pos.coords.latitude, pos.coords.longitude);
+    if(!fromAddress) return;
+    const km = await estimateRoundTripKm(fromAddress, destAddress);
+    if(km!=null){
+      l.from = fromAddress;
+      l.km = km;
+      await persist.lessons();
+      if(currentTab==='calendar' || currentTab==='trips' || currentTab==='dashboard') renderMain();
     }
+  }catch(e){
+    // best-effort only — navigation already happened independently via the anchor tag
   }
-
-  if(btn){ btn.disabled = false; btn.textContent = originalText; }
-  renderMain();
-  // Navigate the CURRENT page straight to Waze (same-page navigation, NOT a new window/tab).
-  // window.open() with target=_blank turned out to be unreliable on real mobile devices,
-  // especially inside a "standalone" home-screen web app, where new-window support is
-  // inconsistent. Setting location.href directly is never blocked as a popup (popup blockers
-  // only intervene on new windows), and is the same technique production apps like Uber/Lyft
-  // use for deep-linking into other apps (Waze/Google Maps) — the OS intercepts the universal
-  // link and hands off to the Waze app without needing a separate browser window at all.
-  window.location.href = wazeHref(destAddress);
 }
 function gcalHref(l){
   const c = clientById(l.clientId);
@@ -1113,7 +1107,7 @@ function calendarTabHTML(){
       <div class="legend-item"><span class="legend-box legend-today"></span>היום</div>
       <div class="legend-item"><span class="legend-box legend-selected"></span>יום נבחר</div>
       <div class="legend-item">🔁 שיעור חוזר</div>
-      <div class="legend-item"><span class="count-badge" style="position:static;">2</span> מספר שיעורים ביום</div>
+      <div class="legend-item"><span class="count-badge">2</span> מספר שיעורים ביום</div>
       <div class="legend-item">🎉 חג</div>
       <div class="legend-item">✡️ יום צום</div>
       <div class="legend-item">🕯️ יום ציון</div>
@@ -1161,7 +1155,7 @@ function lessonItemHTML(l){
       <div class="item-actions">
         ${phone ? `<a class="btn btn-ghost btn-sm" href="${telHref(phone)}">📞 שיחה</a>` : ''}
         ${phone ? `<a class="btn btn-rose btn-sm" href="${waHref(phone, 'היי '+name+'! מזכירה לך את השיעור שלנו ב-'+l.time+' 😊')}" target="_blank">💬 וואטסאפ</a>` : ''}
-        ${address ? `<button class="btn btn-gold btn-sm" data-nav-lesson="${l.id}">🚗 ניווט למשמרת</button>` : ''}
+        ${address ? `<a class="btn btn-gold btn-sm" href="${wazeHref(address)}" data-nav-lesson="${l.id}">🚗 ניווט למשמרת</a>` : ''}
         <a class="btn btn-ghost btn-sm" href="${gcalHref(l)}" target="_blank">📅 יומן גוגל</a>
         <button class="btn btn-ghost btn-sm" data-edit-lesson="${l.id}">✏️</button>
         <button class="btn btn-danger btn-sm" data-del-lesson="${l.id}">${TRASH_ICON}</button>
@@ -1216,6 +1210,8 @@ function dashboardTabHTML(){
   const totalHours = totalMinutes/60;
 
   const totalKm = monthLessons.reduce((s,l)=>s+Number(l.km||0),0);
+  const road6Count = monthLessons.filter(l=>l.viaRoad6).length;
+  const travelCost = (totalKm * (Number(kmPrice)||0)) + (road6Count * (Number(road6Price)||0));
 
   const byClient = {};
   monthLessons.forEach(l=>{
@@ -1263,6 +1259,7 @@ function dashboardTabHTML(){
       <div class="card"><div class="big">${totalKm.toFixed(0)}</div><div class="lbl">ק״מ</div></div>
       <div class="card"><div class="big">${fmtMoney(totalRevenue)}</div><div class="lbl">הכנסה משוערת</div></div>
     </div>
+    ${(kmPrice || road6Count) ? `<div class="tiny" style="margin-bottom:10px;">🚗 עלות נסיעות ישירה החודש: ${fmtMoney(travelCost)}${kmPrice?(' · '+totalKm.toFixed(0)+' ק״מ × '+fmtMoney(kmPrice)):''}${road6Count?(' · '+road6Count+' מעברי כביש 6'):''}</div>` : ''}
     ${missingRateCount ? `<div class="tiny" style="margin-bottom:10px;">${missingRateCount} שיעורים לא נכללו בסכום כי לא הוגדר תעריף לשעה. אפשר להגדיר תעריף בכרטיס הלקוח/ה למטה או בלשונית "לקוחות".</div>` : ''}
     <div class="section-title" style="margin-top:4px;">פירוט לפי לקוח/ה</div>
     <div class="stack">${rowsHtml}</div>
@@ -1280,6 +1277,12 @@ function settingsTabHTML(){
       : `<button class="btn btn-ghost btn-sm" id="enableRemindersBtn" style="width:100%; justify-content:center; margin-bottom:12px;">🔔 הפעלת תזכורות שעה לפני כל שיעור</button>`}
     <button class="btn btn-ghost btn-sm" id="manageAuthPhonesBtn" style="width:100%; justify-content:center; margin-bottom:12px;">☎️ ניהול מספרים מורשים לשליחת סיכומים</button>
     <button class="btn btn-ghost btn-sm" id="manageLoginPhonesBtn" style="width:100%; justify-content:center; margin-bottom:12px;">🔒 ניהול מספרים מורשים לכניסה לאפליקציה</button>
+    <div class="section-title" style="margin-top:18px;">כביש 6</div>
+    <div class="tiny" style="margin-bottom:10px;">אם נסיעה כוללת מעבר בכביש 6, אפשר לסמן זאת בשיעור והעלות הבאה תתווסף אוטומטית.</div>
+    <div class="field" style="margin-bottom:14px;"><label>מחיר מעבר בכביש 6 (₪)</label><input type="number" step="0.1" id="f_road6Price" value="${road6Price||''}" placeholder="לדוגמה: 14.5"></div>
+    <div class="section-title" style="margin-top:18px;">עלות נסיעה</div>
+    <div class="tiny" style="margin-bottom:10px;">עלות לק״מ (דלק, בלאי וכו׳) — משמשת לחישוב העלות הישירה של הנסיעות בלשונית סיכום. אפשר לעדכן מעת לעת.</div>
+    <div class="field" style="margin-bottom:14px;"><label>עלות לק״מ (₪)</label><input type="number" step="0.01" id="f_kmPrice" value="${kmPrice||''}" placeholder="לדוגמה: 1.8"></div>
     <div class="section-title" style="margin-top:18px;">גיבוי ושחזור נתונים</div>
     <div class="tiny" style="margin-bottom:12px;">מומלץ לייצא גיבוי לפני מעבר לגרסה חדשה של האפליקציה, ולייבא אותו בגרסה החדשה כדי לשמור על כל הנתונים.</div>
     <div class="row-2" style="margin-bottom:14px;">
@@ -1559,6 +1562,8 @@ function tripsTabHTML(){
   const monthTrips = lessons.filter(l=>l.date && l.date.startsWith(mk) && Number(l.km||0)>0)
     .sort((a,b)=> a.date===b.date ? a.time.localeCompare(b.time) : a.date.localeCompare(b.date));
   const totalKm = monthTrips.reduce((s,l)=>s+Number(l.km||0),0);
+  const road6Trips = monthTrips.filter(l=>l.viaRoad6);
+  const totalRoad6Cost = road6Trips.length * (Number(road6Price)||0);
   const list = monthTrips.length ? monthTrips.map(tripItemHTML).join('') :
     `<div class="empty">אין נתוני נסיעה לחודש זה.<br>אפשר להוסיף מוצא וק״מ בעת הוספה/עריכה של שיעור בלוח השנה.</div>`;
   return `
@@ -1572,6 +1577,7 @@ function tripsTabHTML(){
       <div class="card"><div class="big">${totalKm.toFixed(0)}</div><div class="lbl">ק״מ בחודש</div></div>
       <div class="card"><div class="big">${monthTrips.length}</div><div class="lbl">נסיעות</div></div>
     </div>
+    ${totalRoad6Cost ? `<div class="tiny" style="margin-bottom:10px;">🛣️ עלות כביש 6 החודש: ${fmtMoney(totalRoad6Cost)} (${road6Trips.length} נסיעות)</div>` : ''}
     <div class="tiny" style="margin-bottom:10px;">נתוני הק״מ נלקחים מהשיעורים בפועל בלוח השנה (מוצא וק״מ שמוגדרים בכל שיעור).</div>
     <div class="stack">${list}</div>
   `;
@@ -1589,8 +1595,9 @@ function tripItemHTML(l){
         </div>
         <span class="badge">${Number(l.km).toFixed(1)} ק״מ</span>
       </div>
+      ${l.viaRoad6 ? `<div class="tiny" style="margin-top:4px; color:var(--primary-deep);">🛣️ כביש 6${road6Price?(' · '+fmtMoney(road6Price)):''}</div>` : ''}
       <div class="item-actions">
-        ${dest ? `<a class="btn btn-gold btn-sm" href="${wazeHref(dest)}" target="_blank">🧭 נווט</a>` : ''}
+        ${dest ? `<a class="btn btn-gold btn-sm" href="${wazeHref(dest)}">🧭 נווט</a>` : ''}
         <button class="btn btn-ghost btn-sm" data-edit-lesson="${l.id}">✏️</button>
       </div>
     </div>`;
@@ -1825,23 +1832,25 @@ function openLessonModal(dateKeyVal, id, draftOverride){
           </div>
           <div id="f_km_status" style="font-size:11px;color:var(--text-soft);margin-top:4px;"></div>
         </div>
+        <label style="display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer; margin-top:2px;">
+          <input type="checkbox" id="f_viaRoad6" ${l.viaRoad6?'checked':''} style="width:18px; height:18px;">
+          🛣️ הנסיעה כוללת מעבר בכביש 6${road6Price?` (יתווסף אוטומטית ₪${road6Price})`:''}
+        </label>
       </div>
     </details>
     ${!id ? `
-    <details style="margin-bottom:14px;">
-      <summary style="cursor:pointer;color:var(--text-soft);font-size:12.5px;font-weight:700;padding:4px 0;">＋ חזרה על השיעור (אופציונלי)</summary>
-      <div style="margin-top:10px;">
-        <div class="field"><label>תדירות</label>
-          <select id="f_repeat">
-            <option value="none">ללא חזרה — שיעור בודד</option>
-            <option value="weekly">כל שבוע</option>
-            <option value="biweekly">כל שבועיים</option>
-            <option value="monthly">כל חודש</option>
-          </select>
-        </div>
-        <div class="field"><label>חזור עד תאריך</label><input type="date" id="f_repeatUntil"></div>
+    <div class="field-group" style="margin-bottom:14px; padding:12px; background:var(--primary-mist); border-radius:14px;">
+      <div style="font-weight:700; font-size:13px; margin-bottom:10px; color:var(--primary-deep);">🔁 חזרה על השיעור (אופציונלי)</div>
+      <div class="field"><label>תדירות</label>
+        <select id="f_repeat">
+          <option value="none">ללא חזרה — שיעור בודד</option>
+          <option value="weekly">כל שבוע</option>
+          <option value="biweekly">כל שבועיים</option>
+          <option value="monthly">כל חודש</option>
+        </select>
       </div>
-    </details>` : ''}
+      <div class="field" style="margin-bottom:0;"><label>חזור עד תאריך</label><input type="date" id="f_repeatUntil"></div>
+    </div>` : ''}
     <div class="modal-actions">
       ${id?`<button class="btn btn-danger" id="delBtn">${TRASH_ICON} מחיקה</button>`:''}
       <button class="btn btn-primary" id="saveBtn">שמירה</button>
@@ -1911,6 +1920,7 @@ function openLessonModal(dateKeyVal, id, draftOverride){
       notes: document.getElementById('f_notes').value,
       from: document.getElementById('f_from').value,
       km: document.getElementById('f_km').value,
+      viaRoad6: document.getElementById('f_viaRoad6').checked,
     };
     openClientModal(null, (newClient)=>{
       openLessonModal(draft.date, id, {...draft, clientId:newClient.id});
@@ -1927,6 +1937,7 @@ function openLessonModal(dateKeyVal, id, draftOverride){
       notes: document.getElementById('f_notes').value.trim(),
       from: document.getElementById('f_from').value.trim(),
       km: document.getElementById('f_km').value,
+      viaRoad6: document.getElementById('f_viaRoad6').checked,
     };
     if(!base.date || !base.time){ alert('נא לבחור תאריך ושעה'); return; }
 
@@ -2000,6 +2011,17 @@ function attachTabEvents(){
     if(loginPhonesBtn) loginPhonesBtn.onclick = openLoginPhonesModal;
     const exportBtn = document.getElementById('exportBackupBtn');
     if(exportBtn) exportBtn.onclick = exportBackup;
+    const road6Input = document.getElementById('f_road6Price');
+    if(road6Input) road6Input.addEventListener('change', ()=>{
+      road6Price = Number(road6Input.value) || 0;
+      persist.road6Price();
+    });
+    const kmPriceInput = document.getElementById('f_kmPrice');
+    if(kmPriceInput) kmPriceInput.addEventListener('change', ()=>{
+      kmPrice = Number(kmPriceInput.value) || 0;
+      persist.kmPrice();
+      if(currentTab==='dashboard') renderMain();
+    });
     const importBtn = document.getElementById('importBackupBtn');
     const importInput = document.getElementById('importBackupInput');
     if(importBtn && importInput) importBtn.onclick = ()=> importInput.click();
@@ -2018,7 +2040,7 @@ function attachTabEvents(){
     });
     document.querySelectorAll('[data-add-lesson]').forEach(b=> b.onclick = ()=> openLessonModal(b.dataset.addLesson));
     document.querySelectorAll('[data-edit-lesson]').forEach(b=> b.onclick = ()=> openLessonModal(null, b.dataset.editLesson));
-    document.querySelectorAll('[data-nav-lesson]').forEach(b=> b.onclick = ()=> navigateToLessonAndCalcKm(b.dataset.navLesson));
+    document.querySelectorAll('[data-nav-lesson]').forEach(a=> a.addEventListener('click', ()=> calcKmInBackground(a.dataset.navLesson)));
     document.querySelectorAll('[data-del-lesson]').forEach(b=> b.onclick = ()=>{
       openConfirmModal('למחוק שיעור זה?', ()=>{
         lessons = lessons.filter(x=>x.id!==b.dataset.delLesson);
