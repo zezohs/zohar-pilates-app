@@ -395,7 +395,7 @@ let authorizedPhones = [];
 let loginPhones = [];
 let road6Price = 0;
 let kmPrice = 0;
-const APP_VERSION = 'v18'; // bump this on every update — also forces re-login and displays in the ניהול tab
+const APP_VERSION = 'v19'; // bump this on every update — also forces re-login and displays in the ניהול tab
 
 const HE_DOW = ['א','ב','ג','ד','ה','ו','ש'];
 const HE_DOW_FULL = ['יום ראשון','יום שני','יום שלישי','יום רביעי','יום חמישי','יום שישי','שבת'];
@@ -849,7 +849,7 @@ function gcalHref(l){
   const name = c ? c.name : 'לקוח/ה';
   const title = encodeURIComponent(`שיעור פילאטיס — ${name}`);
   const start = new Date(`${l.date}T${l.time}:00`);
-  const dur = Number(l.duration||45);
+  const dur = Number(l.duration||60);
   const end = new Date(start.getTime() + dur*60000);
   const fmt = d => `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}T${pad(d.getHours())}${pad(d.getMinutes())}00`;
   const dates = `${fmt(start)}/${fmt(end)}`;
@@ -1147,7 +1147,7 @@ function lessonItemHTML(l){
       <div class="item-top">
         <div>
           <div class="item-title">${name}${l.seriesId?' <span class="tiny">🔁</span>':''}</div>
-          <div class="item-meta">${l.time} · ${l.duration||45} דק׳${address?(' · '+address):''}</div>
+          <div class="item-meta">${l.time} · ${l.duration||60} דק׳${address?(' · '+address):''}</div>
         </div>
         <span class="badge">${l.time}</span>
       </div>
@@ -1786,7 +1786,7 @@ function initScrollPicker(id, selectedValue, onChange){
   });
 }
 function openLessonModal(dateKeyVal, id, draftOverride){
-  const l = draftOverride || (id ? lessons.find(x=>x.id===id) : {date:dateKeyVal, time:'09:00', duration:45, clientId:'', location:'', notes:'', from:'', km:''});
+  const l = draftOverride || (id ? lessons.find(x=>x.id===id) : {date:dateKeyVal, time:'09:00', duration:60, clientId:'', location:'', notes:'', from:'', km:''});
   const isSeries = !!(l && l.seriesId);
 
   const dateSlots = buildDateSlots();
@@ -1805,7 +1805,7 @@ function openLessonModal(dateKeyVal, id, draftOverride){
     <div class="field"><label>תאריך (גלילה לבחירה)</label>${scrollPickerHTML('f_date_picker', dateSlots, dateLabels)}</div>
     <div class="row-2">
       <div class="field"><label>שעה (גלילה, מרווחי 15 דק׳)</label>${scrollPickerHTML('f_time_picker', timeSlots, timeLabels)}</div>
-      <div class="field"><label>אורך (דק׳)</label><input type="number" id="f_duration" value="${l.duration||45}"></div>
+      <div class="field"><label>אורך (דק׳)</label><input type="number" id="f_duration" value="${l.duration||60}"></div>
     </div>
     <div class="field"><label>לקוח/ה (גלילה לבחירה)</label>
       ${scrollPickerHTML('f_client_picker', clientSlots, clientLabels)}
